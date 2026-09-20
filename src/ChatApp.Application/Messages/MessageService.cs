@@ -109,7 +109,7 @@ public sealed class MessageService(
         return ToDto(message);
     }
 
-    public async Task DeleteAsync(Guid userId, Guid messageId, CancellationToken ct = default)
+    public async Task<MessageDto> DeleteAsync(Guid userId, Guid messageId, CancellationToken ct = default)
     {
         var message = await messages.GetByIdAsync(messageId, ct)
             ?? throw new NotFoundAppException("Message not found.");
@@ -125,6 +125,7 @@ public sealed class MessageService(
 
         message.Delete();
         await messages.SaveChangesAsync(ct);
+        return ToDto(message);
     }
 
     private async Task<Conversation> RequireMemberAsync(Guid userId, Guid conversationId, CancellationToken ct)
