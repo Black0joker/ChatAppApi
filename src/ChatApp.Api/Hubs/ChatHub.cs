@@ -15,6 +15,8 @@ public static class ChatHubEvents
     public const string MessageDeleted = "MessageDeleted";
     public const string UserOnline = "UserOnline";
     public const string UserOffline = "UserOffline";
+    public const string TypingStarted = "TypingStarted";
+    public const string TypingStopped = "TypingStopped";
 }
 
 public sealed record SendMessagePayload(Guid ConversationId, string Content, MessageType? MessageType = null, Guid? ReplyToMessageId = null);
@@ -100,6 +102,37 @@ public sealed class ChatHub(
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, GroupName(conversationId));
         logger.LogInformation("User {UserId} left conversation {ConversationId}",
             Context.User?.GetUserId(), conversationId);
+    }
+
+    /// <summary>
+    /// Ephemeral typing indicators (PLAN §15): broadcast to the conversation group,
+    /// excluding the sender. Membership is verified; nothing is written to SQL or
+    /// Redis. Delivery across instances rides the SignalR backplane's group routing.
+    /// Clients must clear stale indicators locally (e.g. no refresh within ~5s),
+    /// since a crashed client never sends TypingStopped.
+    /// </summary>
+    public Task TypingStarted(Guid conversationId)
+        => SendTypingAsync(ChatHubEvents.TypingStarted, conversationId);
+
+    public Task TypingStopped(Guid conversationId)
+        => SendTypingAsync(ChatHubEvents.TypingStopped, conversationId);
+
+    private async Task SendTypingAsync(string @event, Guid conversationId)
+    {
+        var userId = Context.User!.GetUserId();
+        try
+        {
+            await conversations.GetByIdAsync(userId, conversationId);
+            await Clients.OthersInGroup(GroupName(conversationId)).SendAsync(@event, new
+            {
+                conversationId,
+                userId
+            });
+        }
+        catch (Exception ex)
+        {
+            throw ToHubError(ex, userId, conversationId);
+        }
     }
 
     /// <summary>

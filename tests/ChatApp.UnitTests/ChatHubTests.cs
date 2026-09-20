@@ -25,6 +25,7 @@ internal sealed class FakeHubCallerClients : IHubCallerClients
 {
     private readonly RecordingClientProxy _default = new();
     public Dictionary<string, RecordingClientProxy> GroupProxies { get; } = new();
+    public Dictionary<string, RecordingClientProxy> OthersGroupProxies { get; } = new();
 
     public IClientProxy All => _default;
     public IClientProxy AllExcept(IReadOnlyList<string> excludedConnectionIds) => _default;
@@ -38,7 +39,8 @@ internal sealed class FakeHubCallerClients : IHubCallerClients
     public IClientProxy Users(IReadOnlyList<string> userIds) => _default;
     public IClientProxy Caller => _default;
     public IClientProxy Others => _default;
-    public IClientProxy OthersInGroup(string groupName) => _default;
+    public IClientProxy OthersInGroup(string groupName)
+        => OthersGroupProxies.TryGetValue(groupName, out var p) ? p : OthersGroupProxies[groupName] = new RecordingClientProxy();
 }
 
 internal sealed class FakeGroupManager : IGroupManager
@@ -288,5 +290,55 @@ public sealed class ChatHubTests
         hub.Context = new FakeHubContext(new ClaimsPrincipal(new ClaimsIdentity()));
 
         Assert.False(await hub.Heartbeat());
+    }
+
+    [Fact]
+    public async Task TypingStarted_broadcasts_to_group_others_with_token_identity()
+    {
+        var convos = new StubConversationService
+        {
+            OnGetById = (u, c) => new ConversationDto(c, ConversationType.Direct, null, u, DateTimeOffset.UtcNow, null, [])
+        };
+        var hub = CreateHub(new StubMessageService(), convos, out var clients, out _);
+
+        await hub.TypingStarted(ConversationId);
+
+        // Sender excluded: nothing on Group (all) or Caller, only OthersInGroup.
+        Assert.False(clients.GroupProxies.ContainsKey($"conversation:{ConversationId}"));
+        var sent = Assert.Single(clients.OthersGroupProxies[$"conversation:{ConversationId}"].Sent);
+        Assert.Equal(ChatHubEvents.TypingStarted, sent.Method);
+        var json = System.Text.Json.JsonSerializer.Serialize(sent.Args[0]);
+        Assert.Contains(ConversationId.ToString(), json);
+        Assert.Contains(AliceId.ToString(), json);
+    }
+
+    [Fact]
+    public async Task TypingStopped_broadcasts_and_nonmember_is_rejected()
+    {
+        var convos = new StubConversationService
+        {
+            OnGetById = (u, c) => new ConversationDto(c, ConversationType.Direct, null, u, DateTimeOffset.UtcNow, null, [])
+        };
+        var hub = CreateHub(new StubMessageService(), convos, out var clients, out _);
+
+        await hub.TypingStopped(ConversationId);
+
+        var sent = Assert.Single(clients.OthersGroupProxies[$"conversation:{ConversationId}"].Sent);
+        Assert.Equal(ChatHubEvents.TypingStopped, sent.Method);
+    }
+
+    [Fact]
+    public async Task Typing_by_nonmember_throws_and_broadcasts_nothing()
+    {
+        var convos = new StubConversationService
+        {
+            OnGetById = (u, c) => throw new NotFoundAppException("Conversation not found.")
+        };
+        var hub = CreateHub(new StubMessageService(), convos, out var clients, out _);
+
+        var ex = await Assert.ThrowsAsync<HubException>(() => hub.TypingStarted(ConversationId));
+
+        Assert.Equal("Conversation not found.", ex.Message);
+        Assert.Empty(clients.OthersGroupProxies);
     }
 }
