@@ -3,6 +3,7 @@ using ChatApp.Application.Common;
 using ChatApp.Application.Common.Exceptions;
 using ChatApp.Domain.Entities;
 using ChatApp.Domain.Enums;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace ChatApp.Application.Conversations;
@@ -10,6 +11,8 @@ namespace ChatApp.Application.Conversations;
 public sealed class ConversationService(
     IConversationRepository conversations,
     IUserRepository users,
+    INotificationService notifications,
+    ILogger<ConversationService> logger,
     IOptions<ChatOptions> chatOptions) : IConversationService
 {
     private readonly ChatOptions _chat = chatOptions.Value;
@@ -99,6 +102,7 @@ public sealed class ConversationService(
             throw new NotFoundAppException("User not found.");
 
         var existing = conversation.Members.FirstOrDefault(m => m.UserId == request.UserId);
+        var added = existing is null || !existing.IsActive;
         if (existing is not null)
         {
             if (existing.IsActive)
@@ -123,6 +127,21 @@ public sealed class ConversationService(
         }
 
         await conversations.SaveChangesAsync(ct);
+
+        // New membership only (not role changes): tell the added user. Best-effort.
+        if (added)
+        {
+            try
+            {
+                await notifications.NotifyAddedToGroupAsync(
+                    conversation.Id, conversation.Name!, request.UserId, userId, ct);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Added-to-group notification failed. ConversationId={ConversationId}", conversation.Id);
+            }
+        }
+
         return ToDto(conversation, await users.GetByIdsAsync(MemberIds(conversation), ct));
     }
 

@@ -1,7 +1,9 @@
 using ChatApp.Api.Extensions;
 using ChatApp.Api.Hubs;
 using ChatApp.Api.Middleware;
+using ChatApp.Api.Notifications;
 using ChatApp.Api.Presence;
+using ChatApp.Application.Abstractions;
 using ChatApp.Infrastructure;
 using ChatApp.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -38,6 +40,9 @@ using (var probeLog = LoggerFactory.Create(b => b.AddConsole()))
 
 // --- Presence transition -> SignalR broadcast bridge ---
 builder.Services.AddHostedService<PresenceBroadcastService>();
+
+// --- Application fan-out port -> SignalR per-user delivery ---
+builder.Services.AddSingleton<INotificationPublisher, SignalRNotificationPublisher>();
 
 // --- Controllers ---
 builder.Services.AddControllers();

@@ -18,6 +18,7 @@ public static class ChatHubEvents
     public const string UserOffline = "UserOffline";
     public const string TypingStarted = "TypingStarted";
     public const string TypingStopped = "TypingStopped";
+    public const string NotificationReceived = "NotificationReceived";
 }
 
 public sealed record SendMessagePayload(Guid ConversationId, string Content, MessageType? MessageType = null, Guid? ReplyToMessageId = null, IReadOnlyList<Guid>? AttachmentIds = null);

@@ -5,6 +5,7 @@ using ChatApp.Application.Conversations;
 using ChatApp.Application.Messages;
 using ChatApp.Domain.Entities;
 using ChatApp.Domain.Enums;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace ChatApp.UnitTests;
@@ -133,13 +134,26 @@ internal sealed class FakeAttachmentRepository : IAttachmentRepository
     public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
 }
 
+internal sealed class NullNotificationService : INotificationService
+{
+    public Task NotifyMessageAsync(Guid messageId, Guid conversationId, Guid senderId, string contentPreview, CancellationToken ct = default)
+        => Task.CompletedTask;
+    public Task NotifyAddedToGroupAsync(Guid conversationId, string conversationName, Guid addedUserId, Guid addedByUserId, CancellationToken ct = default)
+        => Task.CompletedTask;
+    public Task<NotificationInboxDto> GetInboxAsync(Guid userId, int? limit, CancellationToken ct = default)
+        => Task.FromResult(new NotificationInboxDto([], 0));
+    public Task MarkAsReadAsync(Guid userId, Guid notificationId, CancellationToken ct = default)
+        => Task.CompletedTask;
+}
+
 public sealed class ConversationServiceTests
 {
     private static (ConversationService Svc, FakeConversationRepository Convos, FakeUserRepository Users) Create()
     {
         var convos = new FakeConversationRepository();
         var users = new FakeUserRepository();
-        var svc = new ConversationService(convos, users, Options.Create(new ChatOptions()));
+        var svc = new ConversationService(convos, users, new NullNotificationService(),
+            NullLogger<ConversationService>.Instance, Options.Create(new ChatOptions()));
         return (svc, convos, users);
     }
 
@@ -269,7 +283,7 @@ public sealed class MessageServiceTests
         var msgs = new FakeMessageRepository();
         var users = new FakeUserRepository();
         var opts = Options.Create(new ChatOptions());
-        return (new MessageService(msgs, convos, new FakeReadReceiptRepository(), new FakeAttachmentRepository(), opts), new ConversationService(convos, users, opts), users);
+        return (new MessageService(msgs, convos, new FakeReadReceiptRepository(), new FakeAttachmentRepository(), new NullNotificationService(), NullLogger<MessageService>.Instance, opts), new ConversationService(convos, users, new NullNotificationService(), NullLogger<ConversationService>.Instance, opts), users);
     }
 
     [Fact]
@@ -439,8 +453,8 @@ public sealed class MessageServiceTests
         var convos = new FakeConversationRepository();
         var users = new FakeUserRepository();
         var opts = Options.Create(new ChatOptions());
-        var svc = new MessageService(new FakeMessageRepository(), convos, new FakeReadReceiptRepository(), new FakeAttachmentRepository(), opts);
-        var convoSvc = new ConversationService(convos, users, opts);
+        var svc = new MessageService(new FakeMessageRepository(), convos, new FakeReadReceiptRepository(), new FakeAttachmentRepository(), new NullNotificationService(), NullLogger<MessageService>.Instance, opts);
+        var convoSvc = new ConversationService(convos, users, new NullNotificationService(), NullLogger<ConversationService>.Instance, opts);
 
         var alice = new User("alice", "Alice", "alice@example.com", "HASHED");
         var bob = new User("bob", "Bob", "bob@example.com", "HASHED");

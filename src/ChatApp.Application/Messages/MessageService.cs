@@ -3,6 +3,7 @@ using ChatApp.Application.Common;
 using ChatApp.Application.Common.Exceptions;
 using ChatApp.Domain.Entities;
 using ChatApp.Domain.Enums;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace ChatApp.Application.Messages;
@@ -12,6 +13,8 @@ public sealed class MessageService(
     IConversationRepository conversations,
     IReadReceiptRepository receipts,
     IAttachmentRepository attachments,
+    INotificationService notifications,
+    ILogger<MessageService> logger,
     IOptions<ChatOptions> chatOptions) : IMessageService
 {
     private readonly ChatOptions _chat = chatOptions.Value;
@@ -53,6 +56,17 @@ public sealed class MessageService(
         await messages.AddAsync(message, ct);
         conversation.SetLastMessage(message.Id);
         await messages.SaveChangesAsync(ct);
+
+        // Fan-out is best-effort (guaranteed delivery is Phase 12's outbox):
+        // a notification failure must never fail an already-persisted send.
+        try
+        {
+            await notifications.NotifyMessageAsync(message.Id, conversationId, userId, content, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Message notifications failed. MessageId={MessageId}", message.Id);
+        }
 
         return ToDto(message, attachments: uploads.Select(MessageAttachmentDto.From).ToList());
     }

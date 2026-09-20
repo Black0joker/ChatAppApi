@@ -6,6 +6,7 @@ using ChatApp.Application.Conversations;
 using ChatApp.Application.Messages;
 using ChatApp.Domain.Entities;
 using ChatApp.Infrastructure.Storage;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace ChatApp.UnitTests;
@@ -51,8 +52,8 @@ public sealed class AttachmentServiceTests
         var opts = Options.Create(new ChatOptions { MaxAttachmentSize = maxSize });
         return (
             new AttachmentService(attachments, convos, msgs, storage, new SignatureProbe(), opts),
-            new MessageService(msgs, convos, receipts, attachments, opts),
-            new ConversationService(convos, users, opts),
+            new MessageService(msgs, convos, receipts, attachments, new NullNotificationService(), NullLogger<MessageService>.Instance, opts),
+            new ConversationService(convos, users, new NullNotificationService(), NullLogger<ConversationService>.Instance, opts),
             users,
             storage);
     }
