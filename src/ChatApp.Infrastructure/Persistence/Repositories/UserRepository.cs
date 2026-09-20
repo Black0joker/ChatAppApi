@@ -38,4 +38,9 @@ public sealed class UserRepository(ChatDbContext db) : IUserRepository
 
     public Task SaveChangesAsync(CancellationToken ct = default)
         => db.SaveChangesAsync(ct);
+
+    public Task<int> UpdateLastSeenAsync(IEnumerable<Guid> userIds, DateTimeOffset when, CancellationToken ct = default)
+        => db.Users
+            .Where(x => userIds.Contains(x.Id))
+            .ExecuteUpdateAsync(s => s.SetProperty(u => u.LastSeenAt, when), ct);
 }

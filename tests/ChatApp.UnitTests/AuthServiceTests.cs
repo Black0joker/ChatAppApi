@@ -22,6 +22,18 @@ internal sealed class FakeUserRepository : IUserRepository
             _users.Where(x => set.Contains(x.Id)).ToDictionary(x => x.Id));
     }
 
+    public Task<int> UpdateLastSeenAsync(IEnumerable<Guid> userIds, DateTimeOffset when, CancellationToken ct = default)
+    {
+        var set = userIds.ToHashSet();
+        var count = 0;
+        foreach (var u in _users.Where(x => set.Contains(x.Id)))
+        {
+            u.UpdateLastSeen(when);
+            count++;
+        }
+        return Task.FromResult(count);
+    }
+
     public Task<User?> GetByUsernameAsync(string username, CancellationToken ct = default)
         => Task.FromResult(_users.FirstOrDefault(x => x.Username == username));
 

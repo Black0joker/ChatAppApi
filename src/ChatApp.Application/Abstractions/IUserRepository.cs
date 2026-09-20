@@ -10,6 +10,13 @@ public interface IUserRepository
     /// member lists — see ConversationService.
     /// </summary>
     Task<IReadOnlyDictionary<Guid, User>> GetByIdsAsync(IEnumerable<Guid> ids, CancellationToken ct = default);
+
+    /// <summary>
+    /// Stamp LastSeen without loading entities (single UPDATE; works regardless
+    /// of change tracking — GetByIdsAsync is AsNoTracking by design).
+    /// </summary>
+    /// <returns>Number of rows updated.</returns>
+    Task<int> UpdateLastSeenAsync(IEnumerable<Guid> userIds, DateTimeOffset when, CancellationToken ct = default);
     Task<User?> GetByUsernameAsync(string username, CancellationToken ct = default);
     Task<User?> GetByEmailAsync(string email, CancellationToken ct = default);
     Task<bool> ExistsByUsernameAsync(string username, CancellationToken ct = default);

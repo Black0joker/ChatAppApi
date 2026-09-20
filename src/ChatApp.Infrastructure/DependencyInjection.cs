@@ -12,6 +12,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace ChatApp.Infrastructure;
 
@@ -21,6 +22,8 @@ public static class DependencyInjection
     {
         services.Configure<JwtOptions>(config.GetSection(JwtOptions.SectionName));
         services.Configure<ChatOptions>(config.GetSection(ChatOptions.SectionName));
+        services.Configure<PresenceOptions>(config.GetSection(PresenceOptions.SectionName));
+        services.AddHostedService<PresenceSweepService>();
 
         var sql = config.GetConnectionString("SqlServer")
             ?? throw new InvalidOperationException("ConnectionStrings:SqlServer is missing.");
@@ -53,11 +56,12 @@ public static class DependencyInjection
     private static IPresenceStore CreatePresenceStore(IServiceProvider sp, IConfiguration config)
     {
         var logger = sp.GetRequiredService<ILogger<RedisPresenceStore>>();
+        var presenceOptions = sp.GetRequiredService<IOptions<PresenceOptions>>();
         var mux = RedisSetup.TryConnect(config.GetConnectionString("Redis"), logger);
         if (mux is null)
-            return new InMemoryPresenceStore();
+            return new InMemoryPresenceStore(presenceOptions);
 
         logger.LogInformation("Redis presence store connected.");
-        return new RedisPresenceStore(mux, logger);
+        return new RedisPresenceStore(mux, presenceOptions, logger);
     }
 }

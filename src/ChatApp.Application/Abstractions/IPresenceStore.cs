@@ -16,5 +16,17 @@ public interface IPresenceStore
     /// <returns>True when the user's last active connection was removed.</returns>
     Task<bool> RemoveConnectionAsync(Guid userId, string connectionId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Refresh a connection's TTL. Re-activates silently-dropped connections.
+    /// </summary>
+    /// <returns>True when this (re)activated the user's online state.</returns>
+    Task<bool> RefreshConnectionAsync(Guid userId, string connectionId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Evict connections whose TTL lapsed (crashed servers, lost disconnects).
+    /// </summary>
+    /// <returns>Ids of users that transitioned to offline.</returns>
+    Task<IReadOnlyList<Guid>> SweepStaleConnectionsAsync(CancellationToken ct = default);
+
     Task<bool> IsOnlineAsync(Guid userId, CancellationToken ct = default);
 }

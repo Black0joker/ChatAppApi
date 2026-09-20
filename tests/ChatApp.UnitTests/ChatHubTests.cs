@@ -119,6 +119,11 @@ internal sealed class StubPresenceService : IPresenceService
         return Task.FromResult(true);
     }
 
+    public Task<bool> HeartbeatAsync(Guid userId, string connectionId, CancellationToken ct = default)
+        => Task.FromResult(true);
+
+    public Task<int> SweepStaleConnectionsAsync(CancellationToken ct = default) => Task.FromResult(0);
+
     public Task<bool> IsOnlineAsync(Guid userId, CancellationToken ct = default) => Task.FromResult(true);
 }
 
@@ -274,5 +279,14 @@ public sealed class ChatHubTests
         await hub.OnDisconnectedAsync(null);
 
         Assert.Contains(presence.Disconnected, x => x.UserId == AliceId && x.ConnectionId == "conn-1");
+    }
+
+    [Fact]
+    public async Task Heartbeat_returns_false_for_anonymous_callers()
+    {
+        var hub = CreateHub(new StubMessageService(), new StubConversationService(), out _, out _);
+        hub.Context = new FakeHubContext(new ClaimsPrincipal(new ClaimsIdentity()));
+
+        Assert.False(await hub.Heartbeat());
     }
 }

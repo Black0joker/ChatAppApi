@@ -185,6 +185,28 @@ public sealed class ChatHub(
         return Task.FromResult($"pong:{username}:{Context.ConnectionId}");
     }
 
+    /// <summary>
+    /// Client heartbeat (PLAN §14): refresh the connection TTL so the sweeper
+    /// doesn't evict live connections. Call every ~HeartbeatIntervalSeconds.
+    /// Returns true when the connection is tracked (false = anonymous or failed).
+    /// </summary>
+    public async Task<bool> Heartbeat()
+    {
+        var userId = TryGetUserId();
+        if (!userId.HasValue)
+            return false;
+        try
+        {
+            await presence.HeartbeatAsync(userId.Value, Context.ConnectionId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Heartbeat failed. UserId={UserId}", userId);
+            return false;
+        }
+    }
+
     /// <summary>Returns the server-derived identity — proves userId comes from the token.</summary>
     public Task<object> WhoAmI()
     {
