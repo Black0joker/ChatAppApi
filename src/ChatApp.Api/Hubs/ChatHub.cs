@@ -21,7 +21,7 @@ public static class ChatHubEvents
     public const string NotificationReceived = "NotificationReceived";
 }
 
-public sealed record SendMessagePayload(Guid ConversationId, string Content, MessageType? MessageType = null, Guid? ReplyToMessageId = null, IReadOnlyList<Guid>? AttachmentIds = null);
+public sealed record SendMessagePayload(Guid ConversationId, string Content, MessageType? MessageType = null, Guid? ReplyToMessageId = null, IReadOnlyList<Guid>? AttachmentIds = null, Guid? ClientMessageId = null);
 
 /// <summary>
 /// Phase 5: thin real-time facade (PLAN §9). The hub authenticates, authorizes
@@ -138,29 +138,18 @@ public sealed class ChatHub(
     }
 
     /// <summary>
-    /// Persist-then-broadcast (PLAN §16): the message is only broadcast after
-    /// the database transaction succeeds. The sender always comes from the token.
+    /// Persist, then let the outbox dispatcher deliver (PLAN §39). The response
+    /// returns immediately after commit; MessageReceived follows within a poll
+    /// interval. Retries with the same ClientMessageId return the original message
+    /// without duplicates or rebroadcasts. The sender always comes from the token.
     /// </summary>
     public async Task<MessageDto> SendMessage(SendMessagePayload payload)
     {
         var userId = Context.User!.GetUserId();
         try
         {
-            var message = await messages.SendAsync(userId, payload.ConversationId,
-                new SendMessageRequest(payload.Content, payload.MessageType, payload.ReplyToMessageId, payload.AttachmentIds));
-
-            await Clients.Group(GroupName(payload.ConversationId)).SendAsync(ChatHubEvents.MessageReceived, new
-            {
-                messageId = message.Id,
-                conversationId = message.ConversationId,
-                senderId = message.SenderId,
-                content = message.Content,
-                messageType = message.MessageType,
-                createdAt = message.CreatedAt,
-                replyToMessageId = message.ReplyToMessageId
-            });
-
-            return message;
+            return await messages.SendAsync(userId, payload.ConversationId,
+                new SendMessageRequest(payload.Content, payload.MessageType, payload.ReplyToMessageId, payload.AttachmentIds, payload.ClientMessageId));
         }
         catch (Exception ex)
         {

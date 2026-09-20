@@ -1,6 +1,7 @@
 using ChatApp.Application.Abstractions;
 using ChatApp.Application.Common;
 using ChatApp.Application.Common.Exceptions;
+using ChatApp.Application.Outbox;
 using ChatApp.Domain.Entities;
 using ChatApp.Domain.Enums;
 using Microsoft.Extensions.Logging;
@@ -13,6 +14,7 @@ public sealed class MessageService(
     IConversationRepository conversations,
     IReadReceiptRepository receipts,
     IAttachmentRepository attachments,
+    IOutboxRepository outbox,
     INotificationService notifications,
     ILogger<MessageService> logger,
     IOptions<ChatOptions> chatOptions) : IMessageService
@@ -22,6 +24,20 @@ public sealed class MessageService(
     public async Task<MessageDto> SendAsync(Guid userId, Guid conversationId, SendMessageRequest request, CancellationToken ct = default)
     {
         var conversation = await RequireMemberAsync(userId, conversationId, ct);
+
+        // Idempotency first (PLAN §24): a retried send returns the original message —
+        // no duplicate row, no rebroadcast, no re-notify.
+        var clientKey = request.ClientMessageId == Guid.Empty ? null : request.ClientMessageId;
+        if (clientKey.HasValue)
+        {
+            var duplicate = await messages.GetBySenderAndClientIdAsync(userId, clientKey.Value, ct);
+            if (duplicate is not null)
+            {
+                if (duplicate.ConversationId != conversationId)
+                    throw new ValidationAppException("This idempotency key was already used in another conversation.");
+                return await FullDtoAsync(duplicate, ct);
+            }
+        }
 
         var content = request.Content?.Trim() ?? string.Empty;
         if (content.Length == 0)
@@ -43,7 +59,7 @@ public sealed class MessageService(
             replyTo = target.Id;
         }
 
-        var message = new Message(conversationId, userId, content, type, replyTo);
+        var message = new Message(conversationId, userId, content, type, replyTo, clientKey);
 
         // Ownership-verified attach (PLAN §18): uploads belong to the sender and
         // must be unattached. Same transaction as the message itself.
@@ -51,13 +67,29 @@ public sealed class MessageService(
         foreach (var upload in uploads)
             upload.AttachTo(message.Id);
 
-        // Transaction boundary (PLAN §38): message + LastMessageId persist atomically.
-        // Both repositories share the scoped DbContext, so one SaveChanges = one transaction.
+        // Transaction boundary (PLAN §38/§39): message + LastMessageId + outbox row
+        // persist atomically. Repositories share the scoped DbContext, so one
+        // SaveChanges = one transaction. Delivery happens via the dispatcher —
+        // "saved but never published" is structurally impossible.
         await messages.AddAsync(message, ct);
         conversation.SetLastMessage(message.Id);
-        await messages.SaveChangesAsync(ct);
+        await outbox.AddAsync(new OutboxEvent(
+            "MessageReceived", conversationId, OutboxProcessor.SerializeMessageReceived(message)), ct);
+        try
+        {
+            await messages.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException && clientKey.HasValue)
+        {
+            // Lost the race with a concurrent retry (or timed out after commit):
+            // if the winner's row is now readable, return it instead of failing.
+            var winner = await messages.GetBySenderAndClientIdAsync(userId, clientKey.Value, ct);
+            if (winner is not null && winner.ConversationId == conversationId)
+                return await FullDtoAsync(winner, ct);
+            throw;
+        }
 
-        // Fan-out is best-effort (guaranteed delivery is Phase 12's outbox):
+        // Fan-out is best-effort (guaranteed delivery is the outbox above):
         // a notification failure must never fail an already-persisted send.
         try
         {
@@ -69,6 +101,16 @@ public sealed class MessageService(
         }
 
         return ToDto(message, attachments: uploads.Select(MessageAttachmentDto.From).ToList());
+    }
+
+    /// <summary>Fully-populated DTO for idempotent replays (matches a fresh send).</summary>
+    private async Task<MessageDto> FullDtoAsync(Message message, CancellationToken ct)
+    {
+        var readBy = (await receipts.GetForMessagesAsync([message.Id], ct))
+            .Select(r => new ReadReceiptDto(r.MessageId, r.UserId, r.ReadAt)).ToList();
+        var attached = (await attachments.GetForMessagesAsync([message.Id], ct))
+            .Select(MessageAttachmentDto.From).ToList();
+        return ToDto(message, readBy, attached);
     }
 
     public async Task<MessageHistoryDto> GetHistoryAsync(Guid userId, Guid conversationId, Guid? before, Guid? after, int? limit, CancellationToken ct = default)

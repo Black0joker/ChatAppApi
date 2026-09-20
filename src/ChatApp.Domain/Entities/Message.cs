@@ -13,12 +13,14 @@ public sealed class Message
     public DateTimeOffset? EditedAt { get; private set; }
     public DateTimeOffset? DeletedAt { get; private set; }
     public Guid? ReplyToMessageId { get; private set; }
+    /// <summary>Client-supplied idempotency key (PLAN §24). Null = no dedupe requested.</summary>
+    public Guid? ClientMessageId { get; private set; }
 
     public Conversation? Conversation { get; private set; }
 
     private Message() { } // EF Core
 
-    public Message(Guid conversationId, Guid senderId, string content, MessageType messageType, Guid? replyToMessageId = null)
+    public Message(Guid conversationId, Guid senderId, string content, MessageType messageType, Guid? replyToMessageId = null, Guid? clientMessageId = null)
     {
         // Server is the authority for identity and time (PLAN §23): GUID + server timestamp.
         Id = Guid.NewGuid();
@@ -27,6 +29,7 @@ public sealed class Message
         Content = content;
         MessageType = messageType;
         ReplyToMessageId = replyToMessageId;
+        ClientMessageId = clientMessageId == Guid.Empty ? null : clientMessageId;
         CreatedAt = DateTimeOffset.UtcNow;
     }
 

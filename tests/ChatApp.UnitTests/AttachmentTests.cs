@@ -52,7 +52,7 @@ public sealed class AttachmentServiceTests
         var opts = Options.Create(new ChatOptions { MaxAttachmentSize = maxSize });
         return (
             new AttachmentService(attachments, convos, msgs, storage, new SignatureProbe(), opts),
-            new MessageService(msgs, convos, receipts, attachments, new NullNotificationService(), NullLogger<MessageService>.Instance, opts),
+            new MessageService(msgs, convos, receipts, attachments, new FakeOutboxRepository(), new NullNotificationService(), NullLogger<MessageService>.Instance, opts),
             new ConversationService(convos, users, new NullNotificationService(), NullLogger<ConversationService>.Instance, opts),
             users,
             storage);

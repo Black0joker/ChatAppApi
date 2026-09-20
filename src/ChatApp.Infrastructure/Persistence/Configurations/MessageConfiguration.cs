@@ -19,6 +19,7 @@ public sealed class MessageConfiguration : IEntityTypeConfiguration<Message>
         b.Property(x => x.EditedAt);
         b.Property(x => x.DeletedAt);
         b.Property(x => x.ReplyToMessageId);
+        b.Property(x => x.ClientMessageId);
 
         b.HasOne(x => x.Conversation)
             .WithMany()
@@ -36,5 +37,11 @@ public sealed class MessageConfiguration : IEntityTypeConfiguration<Message>
             .HasDatabaseName("IX_Messages_ConversationId_CreatedAt");
         b.HasIndex(x => new { x.SenderId, x.CreatedAt })
             .HasDatabaseName("IX_Messages_SenderId_CreatedAt");
+
+        // PLAN §24: idempotency key — unique per sender, sparse (nulls = no dedupe).
+        b.HasIndex(x => new { x.SenderId, x.ClientMessageId })
+            .IsUnique()
+            .HasFilter("[ClientMessageId] IS NOT NULL")
+            .HasDatabaseName("IX_Messages_SenderId_ClientMessageId");
     }
 }

@@ -10,6 +10,10 @@ public sealed class MessageRepository(ChatDbContext db) : IMessageRepository
     public Task<Message?> GetByIdAsync(Guid id, CancellationToken ct = default)
         => db.Messages.FirstOrDefaultAsync(x => x.Id == id, ct);
 
+    public Task<Message?> GetBySenderAndClientIdAsync(Guid senderId, Guid clientMessageId, CancellationToken ct = default)
+        => db.Messages.FirstOrDefaultAsync(
+            x => x.SenderId == senderId && x.ClientMessageId == clientMessageId, ct);
+
     public async Task<IReadOnlyList<Message>> GetHistoryAsync(
         Guid conversationId,
         DateTimeOffset? beforeCreatedAt, Guid? beforeId,

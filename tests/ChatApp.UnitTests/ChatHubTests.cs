@@ -162,24 +162,19 @@ public sealed class ChatHubTests
         DateTimeOffset.UtcNow, null, null, null, [], []);
 
     [Fact]
-    public async Task SendMessage_persists_with_token_identity_then_broadcasts()
+    public async Task SendMessage_persists_with_token_identity_and_defers_broadcast_to_outbox()
     {
         Guid seenUser = Guid.Empty;
         var stub = new StubMessageService { OnSend = (u, c, r) => { seenUser = u; return SentMessage(); } };
         var hub = CreateHub(stub, new StubConversationService(), out var clients, out _);
 
         // Note: the payload carries NO user id — identity can only come from the token.
+        // Delivery is the outbox dispatcher's job: the hub itself sends nothing.
         var result = await hub.SendMessage(new SendMessagePayload(ConversationId, "hello"));
 
         Assert.Equal(AliceId, seenUser);
         Assert.Equal(AliceId, result.SenderId);
-        var group = $"conversation:{ConversationId}";
-        Assert.True(clients.GroupProxies.ContainsKey(group));
-        var sent = Assert.Single(clients.GroupProxies[group].Sent);
-        Assert.Equal(ChatHubEvents.MessageReceived, sent.Method);
-        var json = System.Text.Json.JsonSerializer.Serialize(sent.Args[0]);
-        Assert.Contains(AliceId.ToString(), json);
-        Assert.Contains(ConversationId.ToString(), json);
+        Assert.Empty(clients.GroupProxies);
     }
 
     [Fact]

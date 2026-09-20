@@ -6,7 +6,8 @@ public sealed record SendMessageRequest(
     string Content,
     MessageType? MessageType = null,
     Guid? ReplyToMessageId = null,
-    IReadOnlyList<Guid>? AttachmentIds = null);
+    IReadOnlyList<Guid>? AttachmentIds = null,
+    Guid? ClientMessageId = null);
 public sealed record EditMessageRequest(string Content);
 
 public sealed record MessageDto(

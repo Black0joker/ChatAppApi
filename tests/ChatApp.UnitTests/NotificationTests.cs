@@ -49,6 +49,8 @@ internal sealed class FakePublisher : INotificationPublisher
         Published.Add((userId, method, payload));
         return Task.CompletedTask;
     }
+    public Task PublishToConversationAsync(Guid conversationId, string method, string payloadJson, CancellationToken ct = default)
+        => Task.CompletedTask;
 }
 
 internal sealed class FakePush : IPushNotificationService
@@ -186,7 +188,7 @@ public sealed class NotificationServiceTests
         var convoSvc = new ConversationService(convos, users, notify,
             NullLogger<ConversationService>.Instance, opts);
         var msgSvc = new MessageService(msgs, convos, new FakeReadReceiptRepository(),
-            new FakeAttachmentRepository(), notify, NullLogger<MessageService>.Instance, opts);
+            new FakeAttachmentRepository(), new FakeOutboxRepository(), notify, NullLogger<MessageService>.Instance, opts);
 
         var alice = new User("alice", "Alice", "alice@example.com", "HASHED");
         var bob = new User("bob", "Bob", "bob@example.com", "HASHED");
@@ -207,7 +209,7 @@ public sealed class NotificationServiceTests
         var opts = Options.Create(new ChatOptions());
         var failingNotify = new ThrowingNotificationService();
         var msgSvc = new MessageService(msgs, convos, new FakeReadReceiptRepository(),
-            new FakeAttachmentRepository(), failingNotify, NullLogger<MessageService>.Instance, opts);
+            new FakeAttachmentRepository(), new FakeOutboxRepository(), failingNotify, NullLogger<MessageService>.Instance, opts);
         var convoSvc = new ConversationService(convos, users, new NullNotificationService(),
             NullLogger<ConversationService>.Instance, opts);
 

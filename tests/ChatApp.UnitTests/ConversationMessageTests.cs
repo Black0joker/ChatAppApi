@@ -43,6 +43,9 @@ internal sealed class FakeMessageRepository : IMessageRepository
     public Task<Message?> GetByIdAsync(Guid id, CancellationToken ct = default)
         => Task.FromResult(_messages.FirstOrDefault(x => x.Id == id));
 
+    public Task<Message?> GetBySenderAndClientIdAsync(Guid senderId, Guid clientMessageId, CancellationToken ct = default)
+        => Task.FromResult(_messages.FirstOrDefault(x => x.SenderId == senderId && x.ClientMessageId == clientMessageId));
+
     public Task<IReadOnlyList<Message>> GetHistoryAsync(
         Guid conversationId,
         DateTimeOffset? beforeCreatedAt, Guid? beforeId,
@@ -66,6 +69,27 @@ internal sealed class FakeMessageRepository : IMessageRepository
         _messages.Add(message);
         return Task.CompletedTask;
     }
+
+    public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
+}
+
+internal sealed class FakeOutboxRepository : IOutboxRepository
+{
+    public readonly List<OutboxEvent> Events = [];
+
+    public Task AddAsync(OutboxEvent @event, CancellationToken ct = default)
+    {
+        Events.Add(@event);
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<OutboxEvent>> GetPendingAsync(int batchSize, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<OutboxEvent>>(
+            Events.Where(x => x.ProcessedAt == null && x.NextAttemptAt <= DateTimeOffset.UtcNow)
+                .OrderBy(x => x.CreatedAt).Take(batchSize).ToList());
+
+    public Task<int> DeleteProcessedBeforeAsync(DateTimeOffset cutoff, CancellationToken ct = default)
+        => Task.FromResult(Events.RemoveAll(x => x.ProcessedAt != null && x.ProcessedAt < cutoff));
 
     public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
 }
@@ -283,7 +307,7 @@ public sealed class MessageServiceTests
         var msgs = new FakeMessageRepository();
         var users = new FakeUserRepository();
         var opts = Options.Create(new ChatOptions());
-        return (new MessageService(msgs, convos, new FakeReadReceiptRepository(), new FakeAttachmentRepository(), new NullNotificationService(), NullLogger<MessageService>.Instance, opts), new ConversationService(convos, users, new NullNotificationService(), NullLogger<ConversationService>.Instance, opts), users);
+        return (new MessageService(msgs, convos, new FakeReadReceiptRepository(), new FakeAttachmentRepository(), new FakeOutboxRepository(), new NullNotificationService(), NullLogger<MessageService>.Instance, opts), new ConversationService(convos, users, new NullNotificationService(), NullLogger<ConversationService>.Instance, opts), users);
     }
 
     [Fact]
@@ -453,7 +477,7 @@ public sealed class MessageServiceTests
         var convos = new FakeConversationRepository();
         var users = new FakeUserRepository();
         var opts = Options.Create(new ChatOptions());
-        var svc = new MessageService(new FakeMessageRepository(), convos, new FakeReadReceiptRepository(), new FakeAttachmentRepository(), new NullNotificationService(), NullLogger<MessageService>.Instance, opts);
+        var svc = new MessageService(new FakeMessageRepository(), convos, new FakeReadReceiptRepository(), new FakeAttachmentRepository(), new FakeOutboxRepository(), new NullNotificationService(), NullLogger<MessageService>.Instance, opts);
         var convoSvc = new ConversationService(convos, users, new NullNotificationService(), NullLogger<ConversationService>.Instance, opts);
 
         var alice = new User("alice", "Alice", "alice@example.com", "HASHED");

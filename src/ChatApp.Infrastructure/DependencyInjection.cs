@@ -5,7 +5,9 @@ using ChatApp.Application.Common;
 using ChatApp.Application.Conversations;
 using ChatApp.Application.Messages;
 using ChatApp.Application.Notifications;
+using ChatApp.Application.Outbox;
 using ChatApp.Application.Presence;
+using ChatApp.Infrastructure.Outbox;
 using ChatApp.Infrastructure.Persistence;
 using ChatApp.Infrastructure.Persistence.Repositories;
 using ChatApp.Infrastructure.Notifications;
@@ -28,7 +30,9 @@ public static class DependencyInjection
         services.Configure<ChatOptions>(config.GetSection(ChatOptions.SectionName));
         services.Configure<PresenceOptions>(config.GetSection(PresenceOptions.SectionName));
         services.Configure<StorageOptions>(config.GetSection(StorageOptions.SectionName));
+        services.Configure<OutboxOptions>(config.GetSection(OutboxOptions.SectionName));
         services.AddHostedService<PresenceSweepService>();
+        services.AddHostedService<OutboxDispatcher>();
 
         var sql = config.GetConnectionString("SqlServer")
             ?? throw new InvalidOperationException("ConnectionStrings:SqlServer is missing.");
@@ -44,6 +48,8 @@ public static class DependencyInjection
         services.AddScoped<IMessageRepository, MessageRepository>();
         services.AddScoped<IReadReceiptRepository, ReadReceiptRepository>();
         services.AddScoped<IAttachmentRepository, AttachmentRepository>();
+        services.AddScoped<IOutboxRepository, OutboxRepository>();
+        services.AddScoped<OutboxProcessor>();
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IConversationService, ConversationService>();
         services.AddScoped<IMessageService, MessageService>();

@@ -16,7 +16,7 @@ public sealed class ConversationsController(
     public sealed record CreateDirectBody(Guid OtherUserId);
     public sealed record CreateGroupBody(string Name, List<Guid> MemberIds);
     public sealed record AddMemberBody(Guid UserId, MemberRole? Role);
-    public sealed record SendMessageBody(string Content, MessageType? MessageType, Guid? ReplyToMessageId, List<Guid>? AttachmentIds);
+    public sealed record SendMessageBody(string Content, MessageType? MessageType, Guid? ReplyToMessageId, List<Guid>? AttachmentIds, Guid? ClientMessageId);
 
     [HttpPost("direct")]
     public async Task<ActionResult<ConversationDto>> CreateDirect([FromBody] CreateDirectBody body, CancellationToken ct)
@@ -61,7 +61,7 @@ public sealed class ConversationsController(
     public async Task<ActionResult<MessageDto>> SendMessage(Guid id, [FromBody] SendMessageBody body, CancellationToken ct)
     {
         var result = await messages.SendAsync(
-            User.GetUserId(), id, new SendMessageRequest(body.Content, body.MessageType, body.ReplyToMessageId, body.AttachmentIds), ct);
+            User.GetUserId(), id, new SendMessageRequest(body.Content, body.MessageType, body.ReplyToMessageId, body.AttachmentIds, body.ClientMessageId), ct);
         return CreatedAtAction(nameof(GetHistory), new { id }, result);
     }
 

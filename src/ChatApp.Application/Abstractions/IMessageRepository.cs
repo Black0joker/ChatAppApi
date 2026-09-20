@@ -6,6 +6,9 @@ public interface IMessageRepository
 {
     Task<Message?> GetByIdAsync(Guid id, CancellationToken ct = default);
 
+    /// <summary>Idempotency lookup (PLAN §24): sender-scoped client key.</summary>
+    Task<Message?> GetBySenderAndClientIdAsync(Guid senderId, Guid clientMessageId, CancellationToken ct = default);
+
     /// <summary>
     /// Keyset page of a conversation, newest first.
     /// Cursors are (CreatedAt, Id) of a known message; at most one of before/after applies.
