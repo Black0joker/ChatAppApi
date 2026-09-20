@@ -102,6 +102,26 @@ internal sealed class StubConversationService : IConversationService
     public Task RemoveMemberAsync(Guid userId, Guid conversationId, Guid targetUserId, CancellationToken ct = default) => throw new NotImplementedException();
 }
 
+internal sealed class StubPresenceService : IPresenceService
+{
+    public List<(Guid UserId, string ConnectionId)> Connected { get; } = [];
+    public List<(Guid UserId, string ConnectionId)> Disconnected { get; } = [];
+
+    public Task<bool> UserConnectedAsync(Guid userId, string connectionId, CancellationToken ct = default)
+    {
+        Connected.Add((userId, connectionId));
+        return Task.FromResult(true);
+    }
+
+    public Task<bool> UserDisconnectedAsync(Guid userId, string connectionId, CancellationToken ct = default)
+    {
+        Disconnected.Add((userId, connectionId));
+        return Task.FromResult(true);
+    }
+
+    public Task<bool> IsOnlineAsync(Guid userId, CancellationToken ct = default) => Task.FromResult(true);
+}
+
 #endregion
 
 public sealed class ChatHubTests
@@ -114,11 +134,12 @@ public sealed class ChatHubTests
 
     private static ChatHub CreateHub(
         StubMessageService messages, StubConversationService conversations,
-        out FakeHubCallerClients clients, out FakeGroupManager groups)
+        out FakeHubCallerClients clients, out FakeGroupManager groups,
+        StubPresenceService? presence = null)
     {
         clients = new FakeHubCallerClients();
         groups = new FakeGroupManager();
-        return new ChatHub(messages, conversations, NullLogger<ChatHub>.Instance)
+        return new ChatHub(messages, conversations, presence ?? new StubPresenceService(), NullLogger<ChatHub>.Instance)
         {
             Context = new FakeHubContext(AlicePrincipal()),
             Clients = clients,
@@ -231,5 +252,27 @@ public sealed class ChatHubTests
 
         Assert.Equal("An unexpected error occurred.", ex.Message);
         Assert.False(clients.GroupProxies.ContainsKey($"conversation:{ConversationId}")); // never broadcast on failure
+    }
+
+    [Fact]
+    public async Task Connect_registers_presence()
+    {
+        var presence = new StubPresenceService();
+        var hub = CreateHub(new StubMessageService(), new StubConversationService(), out _, out _, presence);
+
+        await hub.OnConnectedAsync();
+
+        Assert.Contains(presence.Connected, x => x.UserId == AliceId && x.ConnectionId == "conn-1");
+    }
+
+    [Fact]
+    public async Task Disconnect_unregisters_presence()
+    {
+        var presence = new StubPresenceService();
+        var hub = CreateHub(new StubMessageService(), new StubConversationService(), out _, out _, presence);
+
+        await hub.OnDisconnectedAsync(null);
+
+        Assert.Contains(presence.Disconnected, x => x.UserId == AliceId && x.ConnectionId == "conn-1");
     }
 }

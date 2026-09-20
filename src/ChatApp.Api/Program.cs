@@ -1,11 +1,13 @@
 using ChatApp.Api.Extensions;
 using ChatApp.Api.Hubs;
 using ChatApp.Api.Middleware;
+using ChatApp.Api.Presence;
 using ChatApp.Infrastructure;
 using ChatApp.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,8 +15,29 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddJwtAuth(builder.Configuration);
 
-// --- Real-time (SignalR auth proven in Phase 2, messaging in Phase 5) ---
-builder.Services.AddSignalR();
+// --- Real-time: Redis backplane only when Redis is actually reachable (PLAN §21) ---
+// A configured-but-down Redis must NOT enable the backplane: its lifetime manager
+// throws on SUBSCRIBE and tears down every SignalR connection. Probe first.
+var signalR = builder.Services.AddSignalR();
+var redisCs = builder.Configuration.GetConnectionString("Redis");
+using (var probeLog = LoggerFactory.Create(b => b.AddConsole()))
+{
+    using var probe = ChatApp.Infrastructure.Redis.RedisSetup.TryConnect(
+        redisCs, probeLog.CreateLogger("Startup"));
+    if (probe is not null)
+    {
+        var redisOptions = ConfigurationOptions.Parse(redisCs!);
+        redisOptions.AbortOnConnectFail = false;
+        signalR.AddStackExchangeRedis(o =>
+        {
+            o.Configuration = redisOptions;
+            o.Configuration.ChannelPrefix = RedisChannel.Literal("ChatApp");
+        });
+    }
+}
+
+// --- Presence transition -> SignalR broadcast bridge ---
+builder.Services.AddHostedService<PresenceBroadcastService>();
 
 // --- Controllers ---
 builder.Services.AddControllers();

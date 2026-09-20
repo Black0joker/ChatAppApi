@@ -3,12 +3,15 @@ using ChatApp.Application.Auth;
 using ChatApp.Application.Common;
 using ChatApp.Application.Conversations;
 using ChatApp.Application.Messages;
+using ChatApp.Application.Presence;
 using ChatApp.Infrastructure.Persistence;
 using ChatApp.Infrastructure.Persistence.Repositories;
+using ChatApp.Infrastructure.Redis;
 using ChatApp.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace ChatApp.Infrastructure;
 
@@ -34,9 +37,27 @@ public static class DependencyInjection
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IConversationService, ConversationService>();
         services.AddScoped<IMessageService, MessageService>();
+        services.AddScoped<IPresenceService, PresenceService>();
+        services.AddSingleton<IPresenceStore>(sp => CreatePresenceStore(sp, config));
         services.AddSingleton<IPasswordHasher, PasswordHasher>();
         services.AddSingleton<IJwtTokenService, JwtTokenService>();
 
         return services;
+    }
+
+    /// <summary>
+    /// Redis when reachable, in-memory presence otherwise. The API must stay
+    /// fully functional single-instance without Redis (local dev); multi-instance
+    /// presence/backplane requires the compose stack.
+    /// </summary>
+    private static IPresenceStore CreatePresenceStore(IServiceProvider sp, IConfiguration config)
+    {
+        var logger = sp.GetRequiredService<ILogger<RedisPresenceStore>>();
+        var mux = RedisSetup.TryConnect(config.GetConnectionString("Redis"), logger);
+        if (mux is null)
+            return new InMemoryPresenceStore();
+
+        logger.LogInformation("Redis presence store connected.");
+        return new RedisPresenceStore(mux, logger);
     }
 }

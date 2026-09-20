@@ -13,6 +13,8 @@ public static class ChatHubEvents
     public const string MessageReceived = "MessageReceived";
     public const string MessageUpdated = "MessageUpdated";
     public const string MessageDeleted = "MessageDeleted";
+    public const string UserOnline = "UserOnline";
+    public const string UserOffline = "UserOffline";
 }
 
 public sealed record SendMessagePayload(Guid ConversationId, string Content, MessageType? MessageType = null, Guid? ReplyToMessageId = null);
@@ -26,22 +28,52 @@ public sealed record SendMessagePayload(Guid ConversationId, string Content, Mes
 public sealed class ChatHub(
     IMessageService messages,
     IConversationService conversations,
+    IPresenceService presence,
     ILogger<ChatHub> logger) : Hub
 {
     public static string GroupName(Guid conversationId) => $"conversation:{conversationId}";
 
-    public override Task OnConnectedAsync()
+    public override async Task OnConnectedAsync()
     {
+        var userId = TryGetUserId();
         logger.LogInformation("SignalR connected. ConnectionId={ConnectionId} UserId={UserId}",
-            Context.ConnectionId, Context.User?.GetUserId());
-        return base.OnConnectedAsync();
+            Context.ConnectionId, userId);
+
+        // Distributed presence (PLAN §14). Presence must never break the connection itself.
+        if (userId.HasValue)
+        {
+            try { await presence.UserConnectedAsync(userId.Value, Context.ConnectionId); }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Presence tracking failed on connect. UserId={UserId}", userId);
+            }
+        }
+
+        await base.OnConnectedAsync();
     }
 
-    public override Task OnDisconnectedAsync(Exception? exception)
+    public override async Task OnDisconnectedAsync(Exception? exception)
     {
+        var userId = TryGetUserId();
         logger.LogInformation("SignalR disconnected. ConnectionId={ConnectionId} Error={Error}",
             Context.ConnectionId, exception?.Message);
-        return base.OnDisconnectedAsync(exception);
+
+        if (userId.HasValue)
+        {
+            try { await presence.UserDisconnectedAsync(userId.Value, Context.ConnectionId); }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Presence tracking failed on disconnect. UserId={UserId}", userId);
+            }
+        }
+
+        await base.OnDisconnectedAsync(exception);
+    }
+
+    private Guid? TryGetUserId()
+    {
+        try { return Context.User!.GetUserId(); }
+        catch { return null; }
     }
 
     /// <summary>
