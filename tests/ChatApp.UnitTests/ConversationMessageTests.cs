@@ -76,6 +76,28 @@ internal static class TestUsers
     public static User Carol() => new("carol", "Carol", "carol@example.com", "HASHED");
 }
 
+internal sealed class FakeReadReceiptRepository : IReadReceiptRepository
+{
+    private readonly List<MessageReadReceipt> _receipts = [];
+
+    public Task<MessageReadReceipt?> GetAsync(Guid messageId, Guid userId, CancellationToken ct = default)
+        => Task.FromResult(_receipts.FirstOrDefault(x => x.MessageId == messageId && x.UserId == userId));
+
+    public Task<IReadOnlyList<MessageReadReceipt>> GetForMessagesAsync(IEnumerable<Guid> messageIds, CancellationToken ct = default)
+    {
+        var set = messageIds.ToHashSet();
+        return Task.FromResult<IReadOnlyList<MessageReadReceipt>>(_receipts.Where(x => set.Contains(x.MessageId)).ToList());
+    }
+
+    public Task AddAsync(MessageReadReceipt receipt, CancellationToken ct = default)
+    {
+        _receipts.Add(receipt);
+        return Task.CompletedTask;
+    }
+
+    public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
+}
+
 public sealed class ConversationServiceTests
 {
     private static (ConversationService Svc, FakeConversationRepository Convos, FakeUserRepository Users) Create()
@@ -212,7 +234,7 @@ public sealed class MessageServiceTests
         var msgs = new FakeMessageRepository();
         var users = new FakeUserRepository();
         var opts = Options.Create(new ChatOptions());
-        return (new MessageService(msgs, convos, opts), new ConversationService(convos, users, opts), users);
+        return (new MessageService(msgs, convos, new FakeReadReceiptRepository(), opts), new ConversationService(convos, users, opts), users);
     }
 
     [Fact]
@@ -302,5 +324,100 @@ public sealed class MessageServiceTests
 
         await Assert.ThrowsAsync<ValidationAppException>(() =>
             svc.SendAsync(alice.Id, ac.Id, new SendMessageRequest("reply", null, first.Id)));
+    }
+
+    private static async Task<(Guid DirectId, MessageDto First, MessageDto Second)> SeedDirectAsync(
+        MessageService svc, ConversationService convoSvc, FakeUserRepository users)
+    {
+        var alice = new User("alice", "Alice", "alice@example.com", "HASHED");
+        var bob = new User("bob", "Bob", "bob@example.com", "HASHED");
+        await users.AddAsync(alice); await users.AddAsync(bob);
+        var direct = await convoSvc.CreateDirectAsync(alice.Id, new CreateDirectRequest(bob.Id));
+        var first = await svc.SendAsync(alice.Id, direct.Id, new SendMessageRequest("one"));
+        var second = await svc.SendAsync(alice.Id, direct.Id, new SendMessageRequest("two"));
+        return (direct.Id, first, second);
+    }
+
+    [Fact]
+    public async Task MarkAsRead_persists_receipt_and_advances_last_read()
+    {
+        var (svc, convoSvc, users) = Create();
+        var (directId, first, second) = await SeedDirectAsync(svc, convoSvc, users);
+        var bob = (await users.GetByUsernameAsync("bob"))!;
+
+        var result = await svc.MarkAsReadAsync(bob.Id, directId, second.Id);
+
+        Assert.True(result.IsNewActivity);
+        Assert.Equal(second.Id, result.Receipt.MessageId);
+        Assert.Equal(bob.Id, result.Receipt.UserId);
+
+        var history = await svc.GetHistoryAsync(bob.Id, directId, null, null, 10);
+        var read = history.Items.First(x => x.Id == second.Id);
+        Assert.Contains(read.ReadBy, r => r.UserId == bob.Id);
+        Assert.DoesNotContain(history.Items.First(x => x.Id == first.Id).ReadBy, r => r.UserId == bob.Id);
+    }
+
+    [Fact]
+    public async Task MarkAsRead_by_nonmember_is_not_found()
+    {
+        var (svc, convoSvc, users) = Create();
+        var (directId, _, second) = await SeedDirectAsync(svc, convoSvc, users);
+        var carol = new User("carol", "Carol", "carol@example.com", "HASHED");
+        await users.AddAsync(carol);
+
+        await Assert.ThrowsAsync<NotFoundAppException>(() =>
+            svc.MarkAsReadAsync(carol.Id, directId, second.Id));
+    }
+
+    [Fact]
+    public async Task MarkAsRead_rejects_message_from_another_conversation()
+    {
+        var (svc, convoSvc, users) = Create();
+        var (directId, _, _) = await SeedDirectAsync(svc, convoSvc, users);
+        var bob = (await users.GetByUsernameAsync("bob"))!;
+        var carol = new User("carol", "Carol", "carol@example.com", "HASHED");
+        await users.AddAsync(carol);
+        var other = await convoSvc.CreateDirectAsync(bob.Id, new CreateDirectRequest(carol.Id));
+        var foreign = await svc.SendAsync(carol.Id, other.Id, new SendMessageRequest("hi"));
+
+        await Assert.ThrowsAsync<ValidationAppException>(() =>
+            svc.MarkAsReadAsync(bob.Id, directId, foreign.Id));
+    }
+
+    [Fact]
+    public async Task Self_mark_is_acknowledged_without_row_or_broadcast_flag()
+    {
+        var (svc, convoSvc, users) = Create();
+        var (directId, _, second) = await SeedDirectAsync(svc, convoSvc, users);
+        var alice = (await users.GetByUsernameAsync("alice"))!;
+
+        var result = await svc.MarkAsReadAsync(alice.Id, directId, second.Id);
+
+        Assert.False(result.IsNewActivity);
+        var history = await svc.GetHistoryAsync(alice.Id, directId, null, null, 10);
+        Assert.DoesNotContain(history.Items.First(x => x.Id == second.Id).ReadBy, r => r.UserId == alice.Id);
+    }
+
+    [Fact]
+    public async Task LastRead_never_regresses_on_stale_mark()
+    {
+        var convos = new FakeConversationRepository();
+        var users = new FakeUserRepository();
+        var opts = Options.Create(new ChatOptions());
+        var svc = new MessageService(new FakeMessageRepository(), convos, new FakeReadReceiptRepository(), opts);
+        var convoSvc = new ConversationService(convos, users, opts);
+
+        var alice = new User("alice", "Alice", "alice@example.com", "HASHED");
+        var bob = new User("bob", "Bob", "bob@example.com", "HASHED");
+        await users.AddAsync(alice); await users.AddAsync(bob);
+        var direct = await convoSvc.CreateDirectAsync(alice.Id, new CreateDirectRequest(bob.Id));
+        var first = await svc.SendAsync(alice.Id, direct.Id, new SendMessageRequest("one"));
+        var second = await svc.SendAsync(alice.Id, direct.Id, new SendMessageRequest("two"));
+
+        await svc.MarkAsReadAsync(bob.Id, direct.Id, second.Id);
+        await svc.MarkAsReadAsync(bob.Id, direct.Id, first.Id); // stale: receipts yes, position no
+
+        var stored = await convos.GetByIdAsync(direct.Id);
+        Assert.Equal(second.Id, stored!.Members.First(m => m.UserId == bob.Id).LastReadMessageId);
     }
 }

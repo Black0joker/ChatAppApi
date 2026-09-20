@@ -13,6 +13,7 @@ public static class ChatHubEvents
     public const string MessageReceived = "MessageReceived";
     public const string MessageUpdated = "MessageUpdated";
     public const string MessageDeleted = "MessageDeleted";
+    public const string MessageRead = "MessageRead";
     public const string UserOnline = "UserOnline";
     public const string UserOffline = "UserOffline";
     public const string TypingStarted = "TypingStarted";
@@ -208,6 +209,36 @@ public sealed class ChatHub(
         catch (Exception ex)
         {
             throw ToHubError(ex, userId, null);
+        }
+    }
+
+    /// <summary>
+    /// Record a read and notify the conversation (PLAN §17). Broadcasts only on
+    /// new activity — self-marks are acknowledged without an event.
+    /// </summary>
+    public async Task<ReadReceiptDto> MarkAsRead(Guid conversationId, Guid messageId)
+    {
+        var userId = Context.User!.GetUserId();
+        try
+        {
+            var result = await messages.MarkAsReadAsync(userId, conversationId, messageId);
+
+            if (result.IsNewActivity)
+            {
+                await Clients.Group(GroupName(conversationId)).SendAsync(ChatHubEvents.MessageRead, new
+                {
+                    conversationId,
+                    messageId = result.Receipt.MessageId,
+                    userId = result.Receipt.UserId,
+                    readAt = result.Receipt.ReadAt
+                });
+            }
+
+            return result.Receipt;
+        }
+        catch (Exception ex)
+        {
+            throw ToHubError(ex, userId, conversationId);
         }
     }
 

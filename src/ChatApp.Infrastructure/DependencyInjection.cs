@@ -37,6 +37,7 @@ public static class DependencyInjection
         services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
         services.AddScoped<IConversationRepository, ConversationRepository>();
         services.AddScoped<IMessageRepository, MessageRepository>();
+        services.AddScoped<IReadReceiptRepository, ReadReceiptRepository>();
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IConversationService, ConversationService>();
         services.AddScoped<IMessageService, MessageService>();

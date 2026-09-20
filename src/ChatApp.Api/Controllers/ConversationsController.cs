@@ -64,4 +64,11 @@ public sealed class ConversationsController(
             User.GetUserId(), id, new SendMessageRequest(body.Content, body.MessageType, body.ReplyToMessageId), ct);
         return CreatedAtAction(nameof(GetHistory), new { id }, result);
     }
+
+    [HttpPost("{id:guid}/messages/{messageId:guid}/read")]
+    public async Task<ActionResult<ReadReceiptDto>> MarkAsRead(Guid id, Guid messageId, CancellationToken ct)
+    {
+        var result = await messages.MarkAsReadAsync(User.GetUserId(), id, messageId, ct);
+        return Ok(result.Receipt);
+    }
 }

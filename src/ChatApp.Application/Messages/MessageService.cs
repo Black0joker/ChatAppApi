@@ -10,6 +10,7 @@ namespace ChatApp.Application.Messages;
 public sealed class MessageService(
     IMessageRepository messages,
     IConversationRepository conversations,
+    IReadReceiptRepository receipts,
     IOptions<ChatOptions> chatOptions) : IMessageService
 {
     private readonly ChatOptions _chat = chatOptions.Value;
@@ -81,8 +82,14 @@ public sealed class MessageService(
         var rows = await messages.GetHistoryAsync(conversationId, beforeAt, beforeId, afterAt, afterId, take, ct);
         var hasMore = rows.Count > take;
         var page = rows.Take(take).ToList();
+
+        // Single batched receipt fetch for the whole page (no N+1).
+        var readBy = (await receipts.GetForMessagesAsync(page.Select(m => m.Id), ct))
+            .GroupBy(r => r.MessageId)
+            .ToDictionary(g => g.Key, g => (IReadOnlyList<ReadReceiptDto>)g.Select(r => new ReadReceiptDto(r.MessageId, r.UserId, r.ReadAt)).ToList());
+
         return new MessageHistoryDto(
-            page.Select(ToDto).ToList(),
+            page.Select(m => ToDto(m, readBy.GetValueOrDefault(m.Id))).ToList(),
             hasMore,
             page.Count == 0 ? null : page[^1].Id);
     }
@@ -128,6 +135,58 @@ public sealed class MessageService(
         return ToDto(message);
     }
 
+    public async Task<MarkAsReadResult> MarkAsReadAsync(Guid userId, Guid conversationId, Guid messageId, CancellationToken ct = default)
+    {
+        var conversation = await RequireMemberAsync(userId, conversationId, ct);
+        var message = await messages.GetByIdAsync(messageId, ct)
+            ?? throw new NotFoundAppException("Message not found.");
+        if (message.ConversationId != conversationId)
+            throw new ValidationAppException("Message belongs to a different conversation.");
+
+        var now = DateTimeOffset.UtcNow;
+
+        if (message.SenderId == userId)
+        {
+            // Reading your own message is a no-op: no receipt row, no broadcast.
+            // LastRead still advances (your own sent message is read by definition).
+            await AdvanceLastReadAsync(conversation, userId, message, ct);
+            await messages.SaveChangesAsync(ct);
+            return new MarkAsReadResult(new ReadReceiptDto(message.Id, userId, now), false);
+        }
+
+        var existing = await receipts.GetAsync(message.Id, userId, ct);
+        if (existing is null)
+            await receipts.AddAsync(new MessageReadReceipt(message.Id, userId, now), ct);
+        else
+            existing.MarkRead(now);
+
+        await AdvanceLastReadAsync(conversation, userId, message, ct);
+
+        // Shared scoped DbContext: one SaveChanges persists receipt + LastRead atomically.
+        await messages.SaveChangesAsync(ct);
+        return new MarkAsReadResult(new ReadReceiptDto(message.Id, userId, now), true);
+    }
+
+    /// <summary>
+    /// Monotonic LastRead: only moves forward in (CreatedAt, Id) order so a stale
+    /// mark can never regress the member's read position.
+    /// </summary>
+    private async Task AdvanceLastReadAsync(Conversation conversation, Guid userId, Message message, CancellationToken ct)
+    {
+        var self = conversation.Members.First(m => m.UserId == userId && m.IsActive);
+        if (self.LastReadMessageId is null || self.LastReadMessageId == message.Id)
+        {
+            self.SetLastRead(message.Id);
+            return;
+        }
+        var current = await messages.GetByIdAsync(self.LastReadMessageId.Value, ct);
+        if (current is null || current.ConversationId != conversation.Id || IsNewerThan(message, current))
+            self.SetLastRead(message.Id);
+    }
+
+    private static bool IsNewerThan(Message a, Message b)
+        => a.CreatedAt > b.CreatedAt || (a.CreatedAt == b.CreatedAt && a.Id.CompareTo(b.Id) > 0);
+
     private async Task<Conversation> RequireMemberAsync(Guid userId, Guid conversationId, CancellationToken ct)
     {
         var conversation = await conversations.GetByIdAsync(conversationId, ct)
@@ -137,8 +196,9 @@ public sealed class MessageService(
         return conversation;
     }
 
-    private static MessageDto ToDto(Message m) => new(
+    private static MessageDto ToDto(Message m, IReadOnlyList<ReadReceiptDto>? readBy = null) => new(
         m.Id, m.ConversationId, m.SenderId,
         m.IsDeleted ? null : m.Content, // soft-delete hides content (PLAN: durable row, no leak)
-        m.MessageType, m.CreatedAt, m.EditedAt, m.DeletedAt, m.ReplyToMessageId);
+        m.MessageType, m.CreatedAt, m.EditedAt, m.DeletedAt, m.ReplyToMessageId,
+        readBy ?? []);
 }

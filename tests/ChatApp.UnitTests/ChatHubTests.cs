@@ -81,6 +81,7 @@ internal sealed class StubMessageService : IMessageService
     public Func<Guid, Guid, SendMessageRequest, MessageDto>? OnSend;
     public Func<Guid, Guid, EditMessageRequest, MessageDto>? OnEdit;
     public Func<Guid, Guid, MessageDto>? OnDelete;
+    public Func<Guid, Guid, Guid, MarkAsReadResult>? OnMarkAsRead;
 
     public Task<MessageDto> SendAsync(Guid userId, Guid conversationId, SendMessageRequest request, CancellationToken ct = default)
         => Task.FromResult(OnSend!(userId, conversationId, request));
@@ -90,6 +91,8 @@ internal sealed class StubMessageService : IMessageService
         => Task.FromResult(OnEdit!(userId, messageId, request));
     public Task<MessageDto> DeleteAsync(Guid userId, Guid messageId, CancellationToken ct = default)
         => Task.FromResult(OnDelete!(userId, messageId));
+    public Task<MarkAsReadResult> MarkAsReadAsync(Guid userId, Guid conversationId, Guid messageId, CancellationToken ct = default)
+        => Task.FromResult(OnMarkAsRead!(userId, conversationId, messageId));
 }
 
 internal sealed class StubConversationService : IConversationService
@@ -156,7 +159,7 @@ public sealed class ChatHubTests
 
     private static MessageDto SentMessage() => new(
         Guid.NewGuid(), ConversationId, AliceId, "hello", MessageType.Text,
-        DateTimeOffset.UtcNow, null, null, null);
+        DateTimeOffset.UtcNow, null, null, null, []);
 
     [Fact]
     public async Task SendMessage_persists_with_token_identity_then_broadcasts()
@@ -290,6 +293,59 @@ public sealed class ChatHubTests
         hub.Context = new FakeHubContext(new ClaimsPrincipal(new ClaimsIdentity()));
 
         Assert.False(await hub.Heartbeat());
+    }
+
+    [Fact]
+    public async Task MarkAsRead_broadcasts_read_event_on_new_activity()
+    {
+        var sent = SentMessage();
+        var stub = new StubMessageService
+        {
+            OnMarkAsRead = (u, c, m) => new MarkAsReadResult(
+                new ReadReceiptDto(m, u, DateTimeOffset.UtcNow), true)
+        };
+        var hub = CreateHub(stub, new StubConversationService(), out var clients, out _);
+
+        var receipt = await hub.MarkAsRead(ConversationId, sent.Id);
+
+        Assert.Equal(AliceId, receipt.UserId);
+        var group = $"conversation:{ConversationId}";
+        var evt = Assert.Single(clients.GroupProxies[group].Sent);
+        Assert.Equal(ChatHubEvents.MessageRead, evt.Method);
+        var json = System.Text.Json.JsonSerializer.Serialize(evt.Args[0]);
+        Assert.Contains(sent.Id.ToString(), json);
+        Assert.Contains(AliceId.ToString(), json);
+    }
+
+    [Fact]
+    public async Task MarkAsRead_self_mark_acknowledged_without_broadcast()
+    {
+        var sent = SentMessage();
+        var stub = new StubMessageService
+        {
+            OnMarkAsRead = (u, c, m) => new MarkAsReadResult(
+                new ReadReceiptDto(m, u, DateTimeOffset.UtcNow), false)
+        };
+        var hub = CreateHub(stub, new StubConversationService(), out var clients, out _);
+
+        await hub.MarkAsRead(ConversationId, sent.Id);
+
+        Assert.False(clients.GroupProxies.ContainsKey($"conversation:{ConversationId}"));
+    }
+
+    [Fact]
+    public async Task MarkAsRead_by_nonmember_throws()
+    {
+        var stub = new StubMessageService
+        {
+            OnMarkAsRead = (u, c, m) => throw new NotFoundAppException("Conversation not found.")
+        };
+        var hub = CreateHub(stub, new StubConversationService(), out var clients, out _);
+
+        var ex = await Assert.ThrowsAsync<HubException>(() => hub.MarkAsRead(ConversationId, Guid.NewGuid()));
+
+        Assert.Equal("Conversation not found.", ex.Message);
+        Assert.False(clients.GroupProxies.ContainsKey($"conversation:{ConversationId}"));
     }
 
     [Fact]
