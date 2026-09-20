@@ -159,7 +159,7 @@ public sealed class ChatHubTests
 
     private static MessageDto SentMessage() => new(
         Guid.NewGuid(), ConversationId, AliceId, "hello", MessageType.Text,
-        DateTimeOffset.UtcNow, null, null, null, []);
+        DateTimeOffset.UtcNow, null, null, null, [], []);
 
     [Fact]
     public async Task SendMessage_persists_with_token_identity_then_broadcasts()

@@ -11,6 +11,7 @@ public sealed class MessageService(
     IMessageRepository messages,
     IConversationRepository conversations,
     IReadReceiptRepository receipts,
+    IAttachmentRepository attachments,
     IOptions<ChatOptions> chatOptions) : IMessageService
 {
     private readonly ChatOptions _chat = chatOptions.Value;
@@ -41,13 +42,19 @@ public sealed class MessageService(
 
         var message = new Message(conversationId, userId, content, type, replyTo);
 
+        // Ownership-verified attach (PLAN §18): uploads belong to the sender and
+        // must be unattached. Same transaction as the message itself.
+        var uploads = await ResolveUploadsAsync(userId, request.AttachmentIds, ct);
+        foreach (var upload in uploads)
+            upload.AttachTo(message.Id);
+
         // Transaction boundary (PLAN §38): message + LastMessageId persist atomically.
         // Both repositories share the scoped DbContext, so one SaveChanges = one transaction.
         await messages.AddAsync(message, ct);
         conversation.SetLastMessage(message.Id);
         await messages.SaveChangesAsync(ct);
 
-        return ToDto(message);
+        return ToDto(message, attachments: uploads.Select(MessageAttachmentDto.From).ToList());
     }
 
     public async Task<MessageHistoryDto> GetHistoryAsync(Guid userId, Guid conversationId, Guid? before, Guid? after, int? limit, CancellationToken ct = default)
@@ -88,8 +95,13 @@ public sealed class MessageService(
             .GroupBy(r => r.MessageId)
             .ToDictionary(g => g.Key, g => (IReadOnlyList<ReadReceiptDto>)g.Select(r => new ReadReceiptDto(r.MessageId, r.UserId, r.ReadAt)).ToList());
 
+        // Same for attachments: one query per page, not per message.
+        var attached = (await attachments.GetForMessagesAsync(page.Select(m => m.Id), ct))
+            .GroupBy(a => a.MessageId!.Value)
+            .ToDictionary(g => g.Key, g => (IReadOnlyList<MessageAttachmentDto>)g.Select(MessageAttachmentDto.From).ToList());
+
         return new MessageHistoryDto(
-            page.Select(m => ToDto(m, readBy.GetValueOrDefault(m.Id))).ToList(),
+            page.Select(m => ToDto(m, readBy.GetValueOrDefault(m.Id), attached.GetValueOrDefault(m.Id))).ToList(),
             hasMore,
             page.Count == 0 ? null : page[^1].Id);
     }
@@ -168,6 +180,33 @@ public sealed class MessageService(
     }
 
     /// <summary>
+    /// Batch-resolves pending uploads, enforcing sender ownership and single-use.
+    /// </summary>
+    private async Task<IReadOnlyList<MessageAttachment>> ResolveUploadsAsync(
+        Guid userId, IReadOnlyList<Guid>? attachmentIds, CancellationToken ct)
+    {
+        if (attachmentIds is null || attachmentIds.Count == 0)
+            return [];
+        var distinct = attachmentIds.Distinct().ToList();
+        if (distinct.Count > _chat.MaxAttachmentsPerMessage)
+            throw new ValidationAppException($"A message cannot carry more than {_chat.MaxAttachmentsPerMessage} attachments.");
+
+        var found = (await attachments.GetByIdsAsync(distinct, ct)).ToDictionary(a => a.Id);
+        var missing = distinct.Where(id => !found.ContainsKey(id)).ToList();
+        if (missing.Count > 0)
+            throw new NotFoundAppException($"Attachments not found: {string.Join(", ", missing)}.");
+
+        foreach (var upload in found.Values)
+        {
+            if (upload.UploadedByUserId != userId)
+                throw new ForbiddenAppException("Attachments must be uploaded by the sender.");
+            if (upload.IsAttached)
+                throw new ConflictAppException("An attachment can only be used once.");
+        }
+        return found.Values.ToList();
+    }
+
+    /// <summary>
     /// Monotonic LastRead: only moves forward in (CreatedAt, Id) order so a stale
     /// mark can never regress the member's read position.
     /// </summary>
@@ -196,9 +235,12 @@ public sealed class MessageService(
         return conversation;
     }
 
-    private static MessageDto ToDto(Message m, IReadOnlyList<ReadReceiptDto>? readBy = null) => new(
+    private static MessageDto ToDto(
+        Message m,
+        IReadOnlyList<ReadReceiptDto>? readBy = null,
+        IReadOnlyList<MessageAttachmentDto>? attachments = null) => new(
         m.Id, m.ConversationId, m.SenderId,
         m.IsDeleted ? null : m.Content, // soft-delete hides content (PLAN: durable row, no leak)
         m.MessageType, m.CreatedAt, m.EditedAt, m.DeletedAt, m.ReplyToMessageId,
-        readBy ?? []);
+        readBy ?? [], attachments ?? []);
 }

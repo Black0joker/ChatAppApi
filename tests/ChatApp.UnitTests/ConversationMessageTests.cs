@@ -98,6 +98,41 @@ internal sealed class FakeReadReceiptRepository : IReadReceiptRepository
     public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
 }
 
+internal sealed class FakeAttachmentRepository : IAttachmentRepository
+{
+    private readonly List<MessageAttachment> _attachments = [];
+
+    public Task<MessageAttachment?> GetByIdAsync(Guid id, CancellationToken ct = default)
+        => Task.FromResult(_attachments.FirstOrDefault(x => x.Id == id));
+
+    public Task<IReadOnlyList<MessageAttachment>> GetByIdsAsync(IEnumerable<Guid> ids, CancellationToken ct = default)
+    {
+        var set = ids.ToHashSet();
+        return Task.FromResult<IReadOnlyList<MessageAttachment>>(_attachments.Where(x => set.Contains(x.Id)).ToList());
+    }
+
+    public Task<IReadOnlyList<MessageAttachment>> GetForMessagesAsync(IEnumerable<Guid> messageIds, CancellationToken ct = default)
+    {
+        var set = messageIds.ToHashSet();
+        return Task.FromResult<IReadOnlyList<MessageAttachment>>(
+            _attachments.Where(x => x.MessageId.HasValue && set.Contains(x.MessageId.Value)).ToList());
+    }
+
+    public Task AddAsync(MessageAttachment attachment, CancellationToken ct = default)
+    {
+        _attachments.Add(attachment);
+        return Task.CompletedTask;
+    }
+
+    public Task RemoveAsync(MessageAttachment attachment, CancellationToken ct = default)
+    {
+        _attachments.Remove(attachment);
+        return Task.CompletedTask;
+    }
+
+    public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
+}
+
 public sealed class ConversationServiceTests
 {
     private static (ConversationService Svc, FakeConversationRepository Convos, FakeUserRepository Users) Create()
@@ -234,7 +269,7 @@ public sealed class MessageServiceTests
         var msgs = new FakeMessageRepository();
         var users = new FakeUserRepository();
         var opts = Options.Create(new ChatOptions());
-        return (new MessageService(msgs, convos, new FakeReadReceiptRepository(), opts), new ConversationService(convos, users, opts), users);
+        return (new MessageService(msgs, convos, new FakeReadReceiptRepository(), new FakeAttachmentRepository(), opts), new ConversationService(convos, users, opts), users);
     }
 
     [Fact]
@@ -404,7 +439,7 @@ public sealed class MessageServiceTests
         var convos = new FakeConversationRepository();
         var users = new FakeUserRepository();
         var opts = Options.Create(new ChatOptions());
-        var svc = new MessageService(new FakeMessageRepository(), convos, new FakeReadReceiptRepository(), opts);
+        var svc = new MessageService(new FakeMessageRepository(), convos, new FakeReadReceiptRepository(), new FakeAttachmentRepository(), opts);
         var convoSvc = new ConversationService(convos, users, opts);
 
         var alice = new User("alice", "Alice", "alice@example.com", "HASHED");

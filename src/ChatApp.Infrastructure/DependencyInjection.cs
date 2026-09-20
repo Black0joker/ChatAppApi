@@ -1,4 +1,5 @@
 using ChatApp.Application.Abstractions;
+using ChatApp.Application.Attachments;
 using ChatApp.Application.Auth;
 using ChatApp.Application.Common;
 using ChatApp.Application.Conversations;
@@ -8,6 +9,7 @@ using ChatApp.Infrastructure.Persistence;
 using ChatApp.Infrastructure.Persistence.Repositories;
 using ChatApp.Infrastructure.Redis;
 using ChatApp.Infrastructure.Services;
+using ChatApp.Infrastructure.Storage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -23,6 +25,7 @@ public static class DependencyInjection
         services.Configure<JwtOptions>(config.GetSection(JwtOptions.SectionName));
         services.Configure<ChatOptions>(config.GetSection(ChatOptions.SectionName));
         services.Configure<PresenceOptions>(config.GetSection(PresenceOptions.SectionName));
+        services.Configure<StorageOptions>(config.GetSection(StorageOptions.SectionName));
         services.AddHostedService<PresenceSweepService>();
 
         var sql = config.GetConnectionString("SqlServer")
@@ -38,9 +41,13 @@ public static class DependencyInjection
         services.AddScoped<IConversationRepository, ConversationRepository>();
         services.AddScoped<IMessageRepository, MessageRepository>();
         services.AddScoped<IReadReceiptRepository, ReadReceiptRepository>();
+        services.AddScoped<IAttachmentRepository, AttachmentRepository>();
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IConversationService, ConversationService>();
         services.AddScoped<IMessageService, MessageService>();
+        services.AddScoped<IAttachmentService, AttachmentService>();
+        services.AddSingleton<IFileStorage, LocalFileStorage>();
+        services.AddSingleton<IFileSignatureProbe, SignatureProbe>();
         services.AddScoped<IPresenceService, PresenceService>();
         services.AddSingleton<IPresenceStore>(sp => CreatePresenceStore(sp, config));
         services.AddSingleton<IPasswordHasher, PasswordHasher>();

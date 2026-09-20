@@ -20,7 +20,7 @@ public static class ChatHubEvents
     public const string TypingStopped = "TypingStopped";
 }
 
-public sealed record SendMessagePayload(Guid ConversationId, string Content, MessageType? MessageType = null, Guid? ReplyToMessageId = null);
+public sealed record SendMessagePayload(Guid ConversationId, string Content, MessageType? MessageType = null, Guid? ReplyToMessageId = null, IReadOnlyList<Guid>? AttachmentIds = null);
 
 /// <summary>
 /// Phase 5: thin real-time facade (PLAN §9). The hub authenticates, authorizes
@@ -146,7 +146,7 @@ public sealed class ChatHub(
         try
         {
             var message = await messages.SendAsync(userId, payload.ConversationId,
-                new SendMessageRequest(payload.Content, payload.MessageType, payload.ReplyToMessageId));
+                new SendMessageRequest(payload.Content, payload.MessageType, payload.ReplyToMessageId, payload.AttachmentIds));
 
             await Clients.Group(GroupName(payload.ConversationId)).SendAsync(ChatHubEvents.MessageReceived, new
             {
