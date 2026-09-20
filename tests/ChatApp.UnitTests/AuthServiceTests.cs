@@ -9,8 +9,18 @@ internal sealed class FakeUserRepository : IUserRepository
 {
     private readonly List<User> _users = [];
 
+    public int GetByIdsCallCount { get; internal set; }
+
     public Task<User?> GetByIdAsync(Guid id, CancellationToken ct = default)
         => Task.FromResult(_users.FirstOrDefault(x => x.Id == id));
+
+    public Task<IReadOnlyDictionary<Guid, User>> GetByIdsAsync(IEnumerable<Guid> ids, CancellationToken ct = default)
+    {
+        GetByIdsCallCount++;
+        var set = ids.ToHashSet();
+        return Task.FromResult<IReadOnlyDictionary<Guid, User>>(
+            _users.Where(x => set.Contains(x.Id)).ToDictionary(x => x.Id));
+    }
 
     public Task<User?> GetByUsernameAsync(string username, CancellationToken ct = default)
         => Task.FromResult(_users.FirstOrDefault(x => x.Username == username));

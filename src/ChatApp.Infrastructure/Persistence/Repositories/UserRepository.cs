@@ -10,6 +10,17 @@ public sealed class UserRepository(ChatDbContext db) : IUserRepository
     public Task<User?> GetByIdAsync(Guid id, CancellationToken ct = default)
         => db.Users.FirstOrDefaultAsync(x => x.Id == id, ct);
 
+    public async Task<IReadOnlyDictionary<Guid, User>> GetByIdsAsync(IEnumerable<Guid> ids, CancellationToken ct = default)
+    {
+        var distinct = ids.Distinct().ToList();
+        if (distinct.Count == 0)
+            return new Dictionary<Guid, User>();
+        return await db.Users
+            .AsNoTracking() // read-only enrichment; never tracked for accidental writes
+            .Where(x => distinct.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id, ct);
+    }
+
     public Task<User?> GetByUsernameAsync(string username, CancellationToken ct = default)
         => db.Users.FirstOrDefaultAsync(x => x.Username == username, ct);
 
