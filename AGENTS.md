@@ -1,6 +1,6 @@
 # AGENTS.md — ChatAppApi
 
-Real-time chat backend (.NET 10, layered: `src/ChatApp.{Api,Application,Domain,Infrastructure}`, `tests/ChatApp.UnitTests`). Plan of record: `PLAN.md` (phases 1–8 done; 9+ pending).
+Real-time chat backend (.NET 10, layered: `src/ChatApp.{Api,Application,Domain,Infrastructure}`, `tests/ChatApp.UnitTests`). Plan of record: `PLAN.md` (phases 1–12 done; 13 pending).
 
 ## Build / test
 - Solution file is `ChatApp.slnx` (new SDK format, **not** `.sln`): `dotnet build ChatApp.slnx`
@@ -8,6 +8,7 @@ Real-time chat backend (.NET 10, layered: `src/ChatApp.{Api,Application,Domain,I
 - `dotnet ef` needs `Microsoft.EntityFrameworkCore.Design` on the **startup** project (`ChatApp.Api`). Migrations live in Infrastructure:
   `dotnet ef migrations add <Name> --project src/ChatApp.Infrastructure --startup-project src/ChatApp.Api --output-dir Persistence/Migrations`
 - The API auto-runs `Database.MigrateAsync()` on startup, so `dotnet ef database update` is only needed for explicit migration.
+- `dotnet ef` builds the app host at design time: a broken DI graph (e.g. singleton capturing a scoped service) fails `migrations add`, not just `run`.
 
 ## Database
 - Dev default is LocalDB (`ConnectionStrings:SqlServer` in `src/ChatApp.Api/appsettings.json`). Override per-run via env: `ConnectionStrings__SqlServer`.
@@ -29,8 +30,12 @@ Real-time chat backend (.NET 10, layered: `src/ChatApp.{Api,Application,Domain,I
 - Reads use batched `GetByIdsAsync` (`AsNoTracking`) — never per-entity loops. Writes must **not** reuse those entities: use `ExecuteUpdateAsync` (tracked-entity mutation after `AsNoTracking` silently persists nothing).
 - Redis backplane is gated by the `RedisSetup.TryConnect` reachability probe, not config presence — an unreachable-but-configured Redis tears down **every** SignalR connection (`RedisHubLifetimeManager` throws on SUBSCRIBE). Same probe drives the Redis vs in-memory presence-store choice.
 - Typing indicators: no SQL/Redis writes, `OthersInGroup` broadcast. Presence transitions are the only cross-instance pub/sub payload.
+- `MessageReceived` is delivered by the `OutboxDispatcher`, never by the hub directly — `SendMessage` persists + returns, delivery follows within a poll interval (`Outbox:PollIntervalMs`, default 1s). Expect that delay in live tests.
+- SignalR group names come only from `ChatHub.GroupName` (dashed GUIDs). Never reformat conversation ids when publishing — `conversation:{N}` vs `conversation:{D}` silently drops events.
+- Hosted services (`BackgroundService`) must resolve scoped deps via `IServiceScopeFactory` per tick, never via constructor injection.
+- Retry-safe sends use `ClientMessageId` (sparse unique index per sender); a retry returns the original message with no rebroadcast and no re-notify.
 
 ## Workflow
-- Branch is `main`. No git remote configured.
+- Branch is `main`, remote is `origin` (`https://github.com/Black0joker/ChatAppApi.git`).
 - **Never commit/push unless explicitly asked.** Scratch SignalR test clients go in `%TEMP%\opencode` (console app + `Microsoft.AspNetCore.SignalR.Client`), never in the repo — delete after use.
 - `appsettings.json` holds a dev-only JWT key (`CHANGE-ME`); real secrets go in env vars.
